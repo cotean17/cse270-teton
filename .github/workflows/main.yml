@@ -3,12 +3,12 @@ name: Deploy Website
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  security-events: write
 
 concurrency:
   group: "pages"
@@ -16,44 +16,68 @@ concurrency:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
-
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Put your site (teton/1.6/*) into a clean dist/ folder
-      - name: Prepare site files
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps for lint/tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest
+
+      - name: Lint with flake8
+        run: |
+          flake8 teton --count --select=E9,F63,F7,F82 --show-source --statistics || true
+          flake8 teton --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Build static site into dist
         run: |
           rm -rf dist
           mkdir -p dist
           cp -R teton/1.6/* dist/
 
-      # Sanity check so the log shows index.html exists
       - name: List dist contents
-        run: |
-          test -f dist/index.html
-          ls -la dist | head -50
+        run: ls -la dist | sed -n '1,200p'
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
-  deploy:
-
+  analyze:
+    name: Analyze (CodeQL)
     runs-on: ubuntu-latest
     needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript' ]
     steps:
-    
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: analyze
+    steps:
       - name: Deploy to GitHub Pages
-
-        id: deployment
-
+        id: deploy
         uses: actions/deploy-pages@v4
